@@ -1,0 +1,105 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Cursor Rules for Convex Workflows & Agents (Revised)
+
+## General Principles
+
+1.  **File Organization:**
+    *   PREFER defining `WorkflowManager` instances in a dedicated file, e.g., `convex/workflowManager.ts` (or `convex/index.ts` if that's your chosen pattern for central managers).
+    *   PREFER defining individual workflow definitions (`workflow.define(...)`) in files relevant to their domain or in a general `convex/workflows.ts`.
+    *   PREFER defining `Agent` instances in a dedicated file, e.g., `convex/agents.ts`.
+    *   PREFER defining Convex functions (queries, mutations, actions) that serve as steps for workflows or tools for agents in module files related to their functionality (e.g., `convex/steps/analysisSteps.ts`, `convex/tools/articleTools.ts`).
+
+2.  **Internal References:**
+    *   ALWAYS use `internal.moduleName.functionName` to reference Convex functions (queries, mutations, actions) when calling them from workflow steps, as `onComplete` handlers, or as part of agent tool implementations that call other Convex functions.
+    *   When exposing agent capabilities as actions/mutations for workflow use (e.g., `agent.asTextAction()`), these will also be referenced via `internal.*`.
+
+3.  **Type Safety & Annotations:**
+    *   **Workflows:** ALWAYS explicitly annotate the return type of a workflow's `handler` function (e.g., `handler: async (step, args): Promise<string> => { ... }`). This is crucial for breaking potential type cycles, especially if the workflow returns a value or uses an `onComplete` handler.
+    *   **General Functions:** STRONGLY CONSIDER explicitly annotating return types for all Convex actions, queries, and mutations, especially those used within workflows or as agent tools, to improve clarity and help with type inference.
+    *   USE `v` (from `convex/values`) for defining argument validators (`args: { ... }`) in all Convex functions and workflow definitions.
+    *   USE Zod schemas for defining `args` in agent tools created with `createTool`.
+
+4.  **Component Initialization:**
+    *   When creating a `WorkflowManager`, ALWAYS pass `components.workflow` as the first argument to its constructor.
+    *   When creating an `Agent`, ALWAYS pass `components.agent` as the first argument to its constructor.
+
+## `@convex-dev/workflow` Specific Rules
+
+1.  **Workflow Definition (`workflow.define`):**
+    *   The `handler` function must have the signature `async (step, args): Promise<ReturnType>`.
+    *   Workflow logic within the `handler` should primarily consist of calls to other Convex functions using `step.runQuery()`, `step.runMutation()`, or `step.runAction()`.
+    *   **Determinism:** AVOID direct use of non-deterministic operations like `Math.random()`, `Date.now()`, or `fetch` within the workflow `handler` itself. Encapsulate such operations within separate `action` steps.
+    *   If a workflow's implementation changes significantly (steps added, removed, or reordered), be aware that existing in-flight instances of that workflow might fail due to determinism violations. Plan for versioning or careful migration if this is a concern for long-lived workflows.
+    *   `console.log()` calls within the workflow definition `handler` might result in duplicate log entries in the Convex dashboard and are not reliably captured as part of the workflow's persisted state. Use step outputs for tracking important data.
+
+2.  **Starting Workflows (`workflow.start`):**
+    *   Workflows should be started from a Convex `mutation` or `action`.
+    *   When using `onComplete`, ensure the specified handler is a `mutation` and its arguments match the expected structure (`{ workflowId: vWorkflowId, result: vResultValidator, context: v.any() }`). `vResultValidator` comes from `@convex-dev/workpool`.
+    *   The `context` argument in `workflow.start` can be used to pass data from the start site to the `onComplete` handler.
+
+3.  **Step Execution:**
+    *   Leverage `Promise.all([...step.runAction(...)])` to run independent steps in parallel. The workflow will wait for all parallel steps to complete before proceeding.
+    *   Understand and configure retry behavior (`defaultRetryBehavior` on `WorkflowManager`, per-workflow `workpoolOptions`, or per-step `retry` option) based on the reliability needs of each step, especially for actions calling external APIs.
+    *   The `name` option can be passed to `step.runAction()` for more descriptive logging of steps.
+
+4.  **State Management & Data Flow:**
+    *   Results from previous steps are available to be passed as arguments to subsequent steps.
+    *   For large data (exceeding 1 MiB total journal size per workflow), store intermediate results in the Convex database within a step function and pass only the IDs through the workflow.
+
+5.  **Lifecycle Management:**
+    *   Use `workflow.status(ctx, workflowId)` to check the status of a workflow, typically from an `action` or `query`.
+    *   Use `workflow.cancel(ctx, workflowId)` to halt a workflow. In-progress `step.runAction()` calls will still finish.
+    *   Workflows are *not* automatically cleaned up. Implement logic using `workflow.cleanup(ctx, workflowId)` (often in an `onComplete` handler or a separate maintenance task) to remove completed workflow data from storage.
+
+## `@convex-dev/agent` Specific Rules
+
+1.  **Agent Configuration (`new Agent(...)`):**
+    *   Specify `chat` (e.g., `openai.chat(...)`) and `textEmbedding` (e.g., `openai.embedding(...)`) models.
+    *   Define clear `instructions` (system prompt) for the agent.
+    *   Configure `tools` carefully.
+        *   Use `createTool({ description, args (Zod), handler })` for Convex tools that need access to `ctx` (e.g., to run queries/mutations/actions). The `handler` will receive an agent-specific `ctx`.
+        *   Standard AI SDK `tool()` can be used for simpler, self-contained tools.
+    *   Review and customize `contextOptions` for RAG over chat history (e.g., `searchOptions.vectorSearch`, `searchOptions.limit`, `recentMessages`, `searchOtherThreads`).
+    *   Review and customize `storageOptions` to control how input and output messages are saved to the thread history.
+    *   Set `usageHandler` if token tracking is required for LLM calls made by the agent.
+    *   The `maxSteps` option in the agent constructor defines the default maximum number of tool execution loops for a single `generateText` call. `maxRetries` defines default tool call failure retries.
+
+2.  **Thread Management:**
+    *   Use `agent.createThread(ctx, { userId?, title?, ... })` to start new conversations. Store and reuse the returned `threadId`.
+    *   Use `agent.continueThread(ctx, { threadId, userId?, ... })` to resume existing conversations.
+    *   Use `thread.generateText({ prompt, tools?, contextOptions?, storageOptions?, usageHandler? })` to get the AI's response.
+    *   Pass `userId` if you want to associate threads with users, enable cross-thread history search, and attribute usage if a `usageHandler` is configured.
+
+3.  **Tools:**
+    *   Define tools with clear `description`s and `args` (using Zod schemas) so the LLM can understand and use them effectively.
+    *   A Convex tool's `handler` (from `createTool`) can use `ctx.runQuery`, `ctx.runMutation`, `ctx.runAction` to interact with other Convex functions. These will typically be `internal` functions.
+    *   Tools can be specified at multiple levels (agent constructor, `createThread`, `continueThread`, `thread.generateText`), with more specific levels overriding defaults.
+    *   Your custom `searchSimilarArticles` action is a prime candidate to be wrapped as a tool for the agent, allowing the agent to decide when to fetch article context.
+
+4.  **Integration with Workflows:**
+    *   Use `agent.asTextAction({ maxSteps? })` or `agent.asObjectAction({ schema, maxSteps? })` to expose agent interactions as Convex actions that can be run as steps within a `@convex-dev/workflow`.
+    *   The `maxSteps` parameter in these `as...Action` methods specifically limits the number of tool execution loops the agent can perform within that single workflow step.
+    *   Use `agent.createThreadMutation()` to create threads as a workflow step.
+
+5.  **RAG Strategy:**
+    *   The agent's built-in RAG (`contextOptions`) is primarily for retrieving relevant messages from the *current thread's (or user's) chat history*.
+    *   To incorporate knowledge from your external database (e.g., articles), define a tool (like `searchArticlesTool` using `searchSimilarArticles`) that the agent can call. The agent's `instructions` should guide it on when to use such tools.
+
+6.  **Message Handling:**
+    *   Understand that `thread.generateText()` automatically includes relevant history based on `contextOptions`.
+    *   To manually add specific context messages before the user's prompt, you can pass an array to `messages` in `thread.generateText({ messages: [contextMsg1, userPromptMsg] })`, and configure `storageOptions` (e.g., `saveAllInputMessages: false`, `saveAnyInputMessages: true` to save only the last one if that's the user's actual turn).
+    *   Use `agent.fetchContextMessages(ctx, { threadId?, messages?, contextOptions? })` for manual context retrieval and `agent.saveMessages(ctx, { threadId, userId?, messages, metadata? })` for manual storage.
+
+7.  **Embedding Management:**
+    *   The agent component provides functions for managing embeddings of messages if vector search of history is enabled (e.g., `agent.generateEmbeddings`, `components.agent.vector.index.paginate`, `updateBatch`, `deleteBatch`, `insertBatch`). Be mindful of vector dimensions if migrating models.
+
+## Installation and Setup
+
+1.  **NPM Packages:** Ensure `@convex-dev/workflow` and/or `@convex-dev/agent` are installed via npm/yarn.
+2.  **`convex.config.ts`:**
+    *   Import the respective config from the component (e.g., `import workflowConfig from "@convex-dev/workflow/convex.config";`, `import agentConfig from "@convex-dev/agent/convex.config";`).
+    *   Call `app.use(workflowConfig);` and/or `app.use(agentConfig);` in your `defineApp()` chain.
