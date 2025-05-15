@@ -3,37 +3,64 @@ import { v } from "convex/values";
 
 export default defineSchema({
   articles: defineTable({
-    author: v.string(),
-    sponsored_position: v.string(), // Assuming "None" is a valid string value, otherwise consider v.optional() or union
+    original_id: v.union(v.number(), v.null()),
+    author_wpid: v.union(v.number(), v.null()),
+    sponsored_position: v.union(v.number(), v.null()),
     title: v.string(),
-    link_slug: v.string(),
-    link_preview: v.string(),
-    source_link: v.optional(v.string()),
-    content: v.string(), // Consider v.optional if content can be empty/missing
-    channel: v.string(),
-    secondary_channel: v.optional(v.string()),
-    publish_date: v.string(), // Consider v.number() for timestamp if easier for querying/sorting
-    publish_time: v.string(), // Consider storing combined datetime as v.number() (timestamp)
-    image: v.optional(v.string()), // Or v.optional(v.id("_storage")) if using Convex file storage
-    chart_image: v.optional(v.string()), // Or v.optional(v.id("_storage"))
-    video_url: v.optional(v.string()),
-    video_title: v.optional(v.string()),
-    audio_url: v.optional(v.string()),
-    audio_file: v.optional(v.string()), // Or v.optional(v.id("_storage"))
-    transcript: v.optional(v.string()),
-    white_paper_pdf: v.optional(v.string()), // Or v.optional(v.id("_storage"))
-    subtitle: v.optional(v.string()),
-    placefilter: v.string(),
-    include_in_article_rss: v.boolean(),
-    include_in_podcast_rss: v.string(), // Consider v.union(v.literal("None"), ...) if values are fixed
-    fresh_finance_category: v.optional(v.string()),
-    status: v.string(), // Consider v.union(v.literal("Published"), v.literal("Unpublished"), ...)
-    last_updated: v.string(), // Consider v.number() for timestamp
-    embedding: v.optional(v.array(v.float64())), // Vector embedding field
+    link: v.string(),
+    source_link: v.union(v.string(), v.null()),
+    content: v.string(),
+    channel: v.union(v.number(), v.null()),
+    channel_url: v.union(v.number(), v.null()),
+    secondary_channel: v.union(v.number(), v.null()),
+    secondary_channel_url: v.union(v.number(), v.null()),
+    publish_date: v.string(),
+    last_updated: v.string(),
+    image_url: v.union(v.string(), v.null()),
+    seo_meta: v.string(),
+    video_url: v.union(v.string(), v.null()),
+    video_title: v.union(v.string(), v.null()),
+    audio_url: v.union(v.string(), v.null()),
+    audio_file: v.union(v.string(), v.null()),
+    transcript: v.union(v.string(), v.null()),
+    white_paper_pdf: v.union(v.string(), v.null()),
+    subtitle: v.string(),
+    placefilter: v.union(v.number(), v.null()),
+    rss_include: v.union(v.number(), v.null()),
+    podcast_rss_include: v.union(v.number(), v.null()),
+    fresh_finance_category: v.union(v.string(), v.null()),
+    status: v.union(v.number(), v.null()),
+    chart_url: v.union(v.string(), v.null()),
+    other: v.string(),
+    other_meta: v.string(),
+    toolset_associations_contributor_post: v.union(v.string(), v.null()),
+    wpcf_publishdate: v.union(v.number(), v.null()),
+    author_id: v.union(v.number(), v.null()),
+    embedding: v.optional(v.array(v.float64())),
   }).vectorIndex("by_embedding", {
     vectorField: "embedding",
     dimensions: 1536,
     filterFields: ["channel", "status"]
-  }),
+  }).index("by_author_wpid", ["author_wpid"]).index("by_author_id", ["author_id"]),
+
+  contributors: defineTable({
+    original_id: v.number(),
+    name: v.string(),
+    link: v.string(),
+    join_date: v.string(),
+    bio: v.string(),
+    wp_user_id: v.number(),
+    thumbnail_id: v.number(),
+    contrib_img: v.string(),
+    twitter: v.union(v.string(), v.null()),
+    email: v.union(v.string(), v.null()),
+    other: v.string(),
+    other_meta: v.string(),
+    published: v.number(),
+    display_email: v.number(),
+    display_linkedin: v.number(),
+    display_twitter: v.number(),
+    linkedin: v.union(v.string(), v.null()),
+  }).index("by_original_id", ["original_id"]).index("by_wp_user_id", ["wp_user_id"]),
   // Add other tables here if needed
 }); 

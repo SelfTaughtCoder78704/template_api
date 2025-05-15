@@ -14,6 +14,7 @@ import type {
   FunctionReference,
 } from "convex/server";
 import type * as articles from "../articles.js";
+import type * as contributors from "../contributors.js";
 import type * as embeddingActions from "../embeddingActions.js";
 import type * as http from "../http.js";
 
@@ -27,6 +28,7 @@ import type * as http from "../http.js";
  */
 declare const fullApi: ApiFromModules<{
   articles: typeof articles;
+  contributors: typeof contributors;
   embeddingActions: typeof embeddingActions;
   http: typeof http;
 }>;

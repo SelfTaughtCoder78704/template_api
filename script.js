@@ -10,3 +10,4 @@ const articles = await client.query(api.articles.get);
 
 
 console.log(articles);
+

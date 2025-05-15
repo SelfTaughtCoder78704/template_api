@@ -8,36 +8,46 @@ import {
 import { api, internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 
+const MAX_EMBEDDING_TEXT_CHARS = 17000; // Define max characters for embedding input
+
 // Define a validator for the full article document structure
 export const ArticleDocValidator = v.object({
   _id: v.id("articles"),
   _creationTime: v.number(),
-  author: v.string(),
-  sponsored_position: v.string(),
+
+  original_id: v.union(v.number(), v.null()),
+  author_wpid: v.union(v.number(), v.null()),
+  sponsored_position: v.union(v.number(), v.null()),
   title: v.string(),
-  link_slug: v.string(),
-  link_preview: v.string(),
-  source_link: v.optional(v.string()),
+  link: v.string(),
+  source_link: v.union(v.string(), v.null()),
   content: v.string(),
-  channel: v.string(),
-  secondary_channel: v.optional(v.string()),
+  channel: v.union(v.number(), v.null()),
+  channel_url: v.union(v.number(), v.null()),
+  secondary_channel: v.union(v.number(), v.null()),
+  secondary_channel_url: v.union(v.number(), v.null()),
   publish_date: v.string(),
-  publish_time: v.string(),
-  image: v.optional(v.string()),
-  chart_image: v.optional(v.string()),
-  video_url: v.optional(v.string()),
-  video_title: v.optional(v.string()),
-  audio_url: v.optional(v.string()),
-  audio_file: v.optional(v.string()),
-  transcript: v.optional(v.string()),
-  white_paper_pdf: v.optional(v.string()),
-  subtitle: v.optional(v.string()),
-  placefilter: v.string(),
-  include_in_article_rss: v.boolean(),
-  include_in_podcast_rss: v.string(),
-  fresh_finance_category: v.optional(v.string()),
-  status: v.string(),
   last_updated: v.string(),
+  image_url: v.union(v.string(), v.null()),
+  seo_meta: v.string(),
+  video_url: v.union(v.string(), v.null()),
+  video_title: v.union(v.string(), v.null()),
+  audio_url: v.union(v.string(), v.null()),
+  audio_file: v.union(v.string(), v.null()),
+  transcript: v.union(v.string(), v.null()),
+  white_paper_pdf: v.union(v.string(), v.null()),
+  subtitle: v.string(),
+  placefilter: v.union(v.number(), v.null()),
+  rss_include: v.union(v.number(), v.null()),
+  podcast_rss_include: v.union(v.number(), v.null()),
+  fresh_finance_category: v.union(v.string(), v.null()),
+  status: v.union(v.number(), v.null()),
+  chart_url: v.union(v.string(), v.null()),
+  other: v.string(),
+  other_meta: v.string(),
+  toolset_associations_contributor_post: v.union(v.string(), v.null()),
+  wpcf_publishdate: v.union(v.number(), v.null()),
+  author_id: v.union(v.number(), v.null()),
   embedding: v.optional(v.array(v.float64())),
 });
 
@@ -50,46 +60,85 @@ export const get = query({
 
 export const createArticle = mutation({
   args: {
-    author: v.string(),
-    sponsored_position: v.string(),
+    original_id: v.union(v.number(), v.null()),
+    author_wpid: v.union(v.number(), v.null()),
+    sponsored_position: v.union(v.number(), v.null()),
     title: v.string(),
-    link_slug: v.string(),
-    link_preview: v.string(),
-    source_link: v.optional(v.string()),
+    link: v.string(),
+    source_link: v.union(v.string(), v.null()),
     content: v.string(),
-    channel: v.string(),
-    secondary_channel: v.optional(v.string()),
+    channel: v.union(v.number(), v.null()),
+    channel_url: v.union(v.number(), v.null()),
+    secondary_channel: v.union(v.number(), v.null()),
+    secondary_channel_url: v.union(v.number(), v.null()),
     publish_date: v.string(),
-    publish_time: v.string(),
-    image: v.optional(v.string()),
-    chart_image: v.optional(v.string()),
-    video_url: v.optional(v.string()),
-    video_title: v.optional(v.string()),
-    audio_url: v.optional(v.string()),
-    audio_file: v.optional(v.string()),
-    transcript: v.optional(v.string()),
-    white_paper_pdf: v.optional(v.string()),
-    subtitle: v.optional(v.string()),
-    placefilter: v.string(),
-    include_in_article_rss: v.boolean(),
-    include_in_podcast_rss: v.string(),
-    fresh_finance_category: v.optional(v.string()),
-    status: v.string(),
     last_updated: v.string(),
-    embedding: v.optional(v.array(v.float64())),
+    image_url: v.union(v.string(), v.null()),
+    seo_meta: v.string(),
+    video_url: v.union(v.string(), v.null()),
+    video_title: v.union(v.string(), v.null()),
+    audio_url: v.union(v.string(), v.null()),
+    audio_file: v.union(v.string(), v.null()),
+    transcript: v.union(v.string(), v.null()),
+    white_paper_pdf: v.union(v.string(), v.null()),
+    subtitle: v.string(),
+    placefilter: v.union(v.number(), v.null()),
+    rss_include: v.union(v.number(), v.null()),
+    podcast_rss_include: v.union(v.number(), v.null()),
+    fresh_finance_category: v.union(v.string(), v.null()),
+    status: v.union(v.number(), v.null()),
+    chart_url: v.union(v.string(), v.null()),
+    other: v.string(),
+    other_meta: v.string(),
+    toolset_associations_contributor_post: v.union(v.string(), v.null()),
+    wpcf_publishdate: v.union(v.number(), v.null()),
+    author_id: v.union(v.number(), v.null()),
   },
   returns: v.id("articles"),
   handler: async (ctx, args) => {
-    const articleId = await ctx.db.insert("articles", args);
+    const articleDataForInsert = { ...args, embedding: undefined };
+    const articleId = await ctx.db.insert("articles", articleDataForInsert);
+
+    let textToEmbed = (args.title || "") + "\n\n" + (args.content || "") + "\n\n" + (args.subtitle || "") + "\n\n" + (args.link || "");
+    if (textToEmbed.length > MAX_EMBEDDING_TEXT_CHARS) {
+      textToEmbed = textToEmbed.substring(0, MAX_EMBEDDING_TEXT_CHARS);
+      console.warn(`Article ${articleId}: Truncated textToEmbed to ${MAX_EMBEDDING_TEXT_CHARS} chars.`);
+    }
 
     await ctx.scheduler.runAfter(0, internal.embeddingActions.generateEmbeddingAndUpdate, {
       articleId: articleId,
-      textToEmbed: args.title + "\n\n" + args.content,
+      textToEmbed: textToEmbed,
     });
 
     return articleId;
   },
 });
+
+// should be able to get by author_wpid
+export const getByAuthorWpid = query({
+  args: { author_wpid: v.number() },
+  handler: async (ctx, args) => {
+    return await ctx.db.query("articles").filter((q) => q.eq(q.field("author_wpid"), args.author_wpid)).collect();
+  },
+});
+
+// should be able to get by author_id
+export const getByAuthorId = query({
+  args: { author_id: v.number() },
+  handler: async (ctx, args) => {
+    return await ctx.db.query("articles").filter((q) => q.eq(q.field("author_id"), args.author_id)).collect();
+  },
+});
+
+// should be able to get by author_id and return the name field from the contributors table using getAuthorNameByAuthorId
+export const getAuthorNameByAuthorId = query({
+  args: { author_id: v.number() },
+  handler: async (ctx, args) => {
+    const author = await ctx.db.query("contributors").filter((q) => q.eq(q.field("original_id"), args.author_id)).first();
+    return author?.name;
+  },
+});
+
 
 // Internal Mutation to store the embedding (moved back here)
 export const updateArticleEmbedding = internalMutation({
@@ -114,6 +163,64 @@ export const fetchArticleDataByIds = internalQuery({
         documents.push(doc);
       }
     }
+    // Doc<"articles">[] should be assignable to the type inferred by v.array(ArticleDocValidator)
+    // if ArticleDocValidator accurately reflects the document structure including _id and _creationTime.
     return documents;
   },
 });
+
+
+// find articles with missing embeddings
+export const findArticlesWithMissingEmbeddings = query({
+  args: {},
+  returns: v.array(ArticleDocValidator),
+  handler: async (ctx) => {
+    return await ctx.db.query("articles").filter((q) => q.eq(q.field("embedding"), undefined)).collect();
+  },
+});
+
+// fix missing embeddings
+export const fixMissingEmbeddings = mutation({
+  args: {},
+  returns: v.string(),
+  handler: async (ctx) => {
+    const articlesToFix: Doc<"articles">[] = await ctx.runQuery(api.articles.findArticlesWithMissingEmbeddings, {});
+
+    if (articlesToFix.length === 0) {
+      console.log("No articles found with missing embeddings.");
+      return "No articles found with missing embeddings.";
+    }
+
+    let fixedCount = 0;
+    for (const article of articlesToFix) {
+      const title = article.title;
+      const content = article.content;
+      const subtitle = article.subtitle;
+      const link = article.link;
+
+      if (article._id && title && content && subtitle && link) {
+        let textToEmbed = (title || "") + "\n\n" + (content || "") + "\n\n" + (subtitle || "") + "\n\n" + (link || "");
+        if (textToEmbed.length > MAX_EMBEDDING_TEXT_CHARS) {
+          textToEmbed = textToEmbed.substring(0, MAX_EMBEDDING_TEXT_CHARS);
+          console.warn(`Fixing Article ${article._id}: Truncated textToEmbed to ${MAX_EMBEDDING_TEXT_CHARS} chars.`);
+        }
+        try {
+          await ctx.scheduler.runAfter(0, internal.embeddingActions.generateEmbeddingAndUpdate, {
+            articleId: article._id,
+            textToEmbed: textToEmbed,
+          });
+          fixedCount++;
+          console.log(`Scheduled embedding generation for article: ${article._id} (${title.substring(0, 30)}...)`);
+        } catch (e) {
+          console.error(`Error scheduling embedding for article ${article._id}:`, e);
+        }
+      } else {
+        console.warn(`Skipping article due to missing critical fields for embedding: ${article._id} (Title: ${title ? title.substring(0, 30) : 'N/A'}...)`);
+      }
+    }
+    const resultMessage: string = `Attempted to schedule embedding generation for ${fixedCount} out of ${articlesToFix.length} articles found with missing embeddings.`;
+    console.log(resultMessage);
+    return resultMessage;
+  },
+});
+
