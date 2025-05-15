@@ -41,7 +41,7 @@ export default defineSchema({
     vectorField: "embedding",
     dimensions: 1536,
     filterFields: ["channel", "status"]
-  }).index("by_author_wpid", ["author_wpid"]).index("by_author_id", ["author_id"]),
+  }).index("by_author_wpid", ["author_wpid"]).index("by_author_id", ["author_id"]).index("by_channel", ["channel"]).index("by_original_id", ["original_id"]),
 
   contributors: defineTable({
     original_id: v.number(),
@@ -63,4 +63,17 @@ export default defineSchema({
     linkedin: v.union(v.string(), v.null()),
   }).index("by_original_id", ["original_id"]).index("by_wp_user_id", ["wp_user_id"]),
   // Add other tables here if needed
+  channels: defineTable({
+    original_id: v.union(v.number(), v.null()),
+    title: v.union(v.string(), v.null()),
+    slug: v.union(v.string(), v.null()),
+    redirect: v.union(v.string(), v.null()),
+    template: v.union(v.string(), v.null()),
+    dataset: v.union(v.string(), v.null()),
+    summary: v.union(v.string(), v.null()),
+    channel_note: v.union(v.string(), v.null()),
+    grid_placement: v.union(v.number(), v.null()),
+    channel_notes: v.union(v.string(), v.null()),
+    template_layout_id: v.union(v.number(), v.null())
+  }).index("by_original_id", ["original_id"]),
 }); 

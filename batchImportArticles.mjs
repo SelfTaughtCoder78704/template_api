@@ -9,11 +9,11 @@ dotenv.config();
 
 // --- Configuration ---
 const CONVEX_URL = 'https://shocking-albatross-305.convex.cloud'; // !! REPLACE THIS !!
-const INPUT_JSONL_FILE = "./advisorpedia.jsonl"; // Or your actual file path
+const INPUT_JSONL_FILE = "./advisorpedia_501-1000.jsonl"; // Or your actual file path
 const MUTATIONS_PER_BATCH = 10;
 const DELAY_BETWEEN_MUTATIONS_MS = 500; // 0.5 seconds
 const DELAY_AFTER_BATCH_MS = 10000;   // 10 seconds
-const START_FROM_LINE = 127; // New configuration: Line number to start processing from (1-indexed)
+const START_FROM_LINE = 1; // New configuration: Line number to start processing from (1-indexed)
 // --- End Configuration ---
 
 if (CONVEX_URL === "YOUR_CONVEX_URL_HERE") {
@@ -32,7 +32,7 @@ async function processLine(line) {
 
     // --- Map data from JSONL to createArticle arguments ---
     const argsForCreateArticle = {
-      original_id: articleDataFromLine.id,
+      original_id: articleDataFromLine.original_id,
       author_wpid: articleDataFromLine.author_wpid,
       sponsored_position: articleDataFromLine.sponsored_position,
       title: articleDataFromLine.title,

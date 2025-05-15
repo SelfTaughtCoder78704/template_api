@@ -5,6 +5,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
+import { paginationOptsValidator } from "convex/server";
 import { api, internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 
@@ -223,4 +224,46 @@ export const fixMissingEmbeddings = mutation({
     return resultMessage;
   },
 });
+
+export const getByChannel = query({
+  args: {
+    channel: v.number(),
+    cursor: v.optional(v.string()),
+    numItems: v.optional(v.number())
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.query("articles")
+      .filter((q) => q.eq(q.field("channel"), args.channel))
+      .order("desc")
+      .paginate({
+        cursor: args.cursor ?? null,
+        numItems: args.numItems ?? 20
+      });
+  },
+});
+
+export const getChannelSlugByArticleOriginalId = query({
+  args: {
+    original_id: v.number()
+  },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, args): Promise<string | null> => {
+    // Find the article by original_id using the index
+    const article = await ctx.db.query("articles")
+      .withIndex("by_original_id", (q) => q.eq("original_id", args.original_id))
+      .first();
+
+    if (!article || article.channel === null) {
+      return null;
+    }
+
+    // Get the channel slug using the channels.channelSlug function
+    const channelSlug: string | null = await ctx.runQuery(api.channels.channelSlug, {
+      original_id: article.channel
+    });
+
+    return channelSlug;
+  },
+});
+
 
