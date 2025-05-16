@@ -19,6 +19,7 @@ export const SlimArticleDataValidator = v.object({
   content: v.string(), // Or a snippet/summary if full content is too large
   subtitle: v.optional(v.string()), // Assuming subtitle can be optional or sometimes empty
   link: v.string(),
+  reconstructedLink: v.optional(v.string()),
 });
 
 // Internal Action to generate and store embedding
@@ -127,7 +128,9 @@ export const searchSimilarArticlesInternal = internalAction({
     limit: v.optional(v.number()),
   },
   returns: v.array(SlimArticleDataValidator),
-  handler: async (ctx, args): Promise<({ _id: Id<"articles">, title: string, content: string, subtitle?: string, link: string })[]> => {
+  handler: async (ctx, args): Promise<({ _id: Id<"articles">, title: string, content: string, subtitle?: string, link: string, reconstructedLink?: string })[]> => {
+    // console.log("[searchSimilarArticlesInternal] Received args:", JSON.stringify(args));
+
     // 1. Generate embedding for the search query
     let queryEmbedding;
     try {
@@ -137,53 +140,130 @@ export const searchSimilarArticlesInternal = internalAction({
       });
       queryEmbedding = embeddingResponse.data[0].embedding;
       if (!queryEmbedding) {
+        console.error("[searchSimilarArticlesInternal] Failed to generate query embedding, response did not contain embedding.");
         throw new Error("Failed to generate query embedding.");
       }
+      // console.log("[searchSimilarArticlesInternal] Query embedding generated successfully.");
     } catch (error) {
-      console.error("Error generating query embedding:", error);
+      console.error("[searchSimilarArticlesInternal] Error generating query embedding:", error);
       return [];
     }
 
     // 2. Prepare filter for vectorSearch
-    let filterExpression = undefined;
-    if (args.filterChannel && args.filterStatus) {
-      filterExpression = (q: any) => q.or(
-        q.eq("channel", args.filterChannel!),
-        q.eq("status", args.filterStatus!)
-      );
-    } else if (args.filterChannel) {
-      filterExpression = (q: any) => q.eq("channel", args.filterChannel!);
-    } else if (args.filterStatus) {
-      filterExpression = (q: any) => q.eq("status", args.filterStatus!);
+    let channelIdForFilter: number | null = null;
+    if (args.filterChannel) {
+      // console.log(`[searchSimilarArticlesInternal] Attempting to find channel_id for slug: "${args.filterChannel}"`);
+      try {
+        channelIdForFilter = await ctx.runQuery(api.channels.getChannelOriginalIdBySlug, { slug: args.filterChannel });
+        if (channelIdForFilter === null) {
+          console.warn(`[searchSimilarArticlesInternal] Channel slug "${args.filterChannel}" not found. No articles will be returned for this channel filter.`);
+        } else {
+          // console.log(`[searchSimilarArticlesInternal] Found channel_id: ${channelIdForFilter} for slug: "${args.filterChannel}"`);
+        }
+      } catch (e) {
+        console.error(`[searchSimilarArticlesInternal] Error fetching original_id for channel slug ${args.filterChannel}:`, e);
+      }
     }
 
-    // 3. Perform vector search
-    const searchResults = await ctx.vectorSearch(
-      "articles",
-      "by_embedding",
-      {
-        vector: queryEmbedding,
-        limit: args.limit ?? 10,
-        filter: filterExpression,
+    let filterExpression = undefined;
+
+    if (channelIdForFilter !== null && args.filterStatus) {
+      const statusAsString = String(args.filterStatus);
+      const statusAsNumber = parseInt(statusAsString, 10);
+
+      if (!isNaN(statusAsNumber)) {
+        // console.log(`[searchSimilarArticlesInternal] Applying filters for channel_id: ${channelIdForFilter} AND status: ${statusAsNumber}`);
+        filterExpression = (q: any) => q.and(
+          q.eq("channel", channelIdForFilter!),
+          q.eq("status", statusAsNumber)
+        );
+      } else if (channelIdForFilter !== null) {
+        // console.log(`[searchSimilarArticlesInternal] Applying filter ONLY for channel_id: ${channelIdForFilter} (status filter '${args.filterStatus}' was invalid or not provided)`);
+        filterExpression = (q: any) => q.eq("channel", channelIdForFilter!);
+      } else {
+        // console.warn(`[searchSimilarArticlesInternal] Invalid status '${args.filterStatus}' provided and no channel filter. No status filter applied.`);
       }
-    );
+    } else if (channelIdForFilter !== null) {
+      // console.log(`[searchSimilarArticlesInternal] Applying filter ONLY for channel_id: ${channelIdForFilter}`);
+      filterExpression = (q: any) => q.eq("channel", channelIdForFilter!);
+    } else if (args.filterStatus) {
+      const statusAsString = String(args.filterStatus);
+      const statusAsNumber = parseInt(statusAsString, 10);
+      if (!isNaN(statusAsNumber)) {
+        // console.log(`[searchSimilarArticlesInternal] Applying filter ONLY for status: ${statusAsNumber}`);
+        filterExpression = (q: any) => q.eq("status", statusAsNumber);
+      } else {
+        // console.warn(`[searchSimilarArticlesInternal] Invalid status '${args.filterStatus}' provided. No status filter applied.`);
+      }
+    }
+
+    // console.log("[searchSimilarArticlesInternal] Constructed filterExpression:", filterExpression ? "Expression defined" : "undefined");
+
+    // 3. Perform vector search
+    let searchResults;
+    try {
+      searchResults = await ctx.vectorSearch(
+        "articles",
+        "by_embedding",
+        {
+          vector: queryEmbedding,
+          limit: args.limit ?? 10,
+          filter: filterExpression,
+        }
+      );
+      // console.log("[searchSimilarArticlesInternal] Vector search results:", JSON.stringify(searchResults));
+    } catch (e) {
+      console.error("[searchSimilarArticlesInternal] Error during vector search:", e);
+      return [];
+    }
 
     // 4. Extract IDs
     const ids = searchResults.map((result) => result._id);
+    // console.log("[searchSimilarArticlesInternal] Extracted IDs from search results:", JSON.stringify(ids));
     if (ids.length === 0) {
+      // console.log("[searchSimilarArticlesInternal] No IDs found after vector search, returning empty array.");
       return [];
     }
 
     // 5. Fetch full documents
-    const fullDocuments: Doc<"articles">[] = await ctx.runQuery(internal.articles.fetchArticleDataByIds, { ids });
+    let fullDocuments: Doc<"articles">[] = [];
+    try {
+      fullDocuments = await ctx.runQuery(internal.articles.fetchArticleDataByIds, { ids });
+      // console.log("[searchSimilarArticlesInternal] Fetched full documents:", JSON.stringify(fullDocuments.map(d => ({ _id: d._id, title: d.title, channel: d.channel, status: d.status }))));
+    } catch (e) {
+      console.error("[searchSimilarArticlesInternal] Error fetching full documents by IDs:", e);
+      return []; // If fetching documents fails, return empty
+    }
+
+    if (fullDocuments.length === 0) {
+      // console.log("[searchSimilarArticlesInternal] No full documents found for the extracted IDs, returning empty array.");
+      return [];
+    }
 
     // Map to the slimmer structure
-    const slimDocuments = fullDocuments.map(doc => ({
-      _id: doc._id,
-      title: doc.title,
-      content: doc.content,
-      subtitle: doc.subtitle || undefined,
-      link: doc.link,
+    const slimDocuments = await Promise.all(fullDocuments.map(async (doc) => {
+      let articleLink = `advisorpedia.com/${doc.link}`;
+      let channelSlugForLink: string | null = null;
+      if (doc.channel !== null && doc.channel !== undefined) {
+        try {
+          channelSlugForLink = await ctx.runQuery(api.channels.getChannelSlugByChannelOriginalId, { channelOriginalId: doc.channel });
+          if (channelSlugForLink) {
+            articleLink = `advisorpedia.com/${channelSlugForLink}/${doc.link}`;
+          }
+        } catch (e) {
+          console.warn(`Failed to get channel slug for channel original_id ${doc.channel} for article ${doc._id}:`, e);
+          // Fallback to the simpler link if channel slug fetch fails
+        }
+      }
+
+      return {
+        _id: doc._id,
+        title: doc.title,
+        content: doc.content + `\n\n(Source: ${articleLink})`, // Append constructed link to content
+        subtitle: doc.subtitle || undefined,
+        link: doc.link, // Keep original link field as well
+        reconstructedLink: articleLink,
+      };
     }));
 
     return slimDocuments;

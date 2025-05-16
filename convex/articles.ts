@@ -266,4 +266,21 @@ export const getChannelSlugByArticleOriginalId = query({
   },
 });
 
+// Query to fetch a few articles by channel ID for inspection
+export const getArticlesByChannelId = query({
+  args: {
+    channelId: v.number(),
+    limit: v.optional(v.number()),
+  },
+  returns: v.array(ArticleDocValidator),
+  handler: async (ctx, args) => {
+    const articles = await ctx.db
+      .query("articles")
+      .withIndex("by_channel", (q) => q.eq("channel", args.channelId))
+      .order("desc") // Get most recent first, or any order
+      .take(args.limit ?? 3); // Default to 3 if limit not provided
+    return articles;
+  },
+});
+
 
