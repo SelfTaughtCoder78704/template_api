@@ -87,32 +87,47 @@ http.route({
     const articleArgs = {
       title: body.title,
       content: body.content,
-      author: body.author,
-      channel: body.channel,
-      status: body.status,
-      // Optional fields: provide them if they exist in the body, otherwise they'll be undefined
-      // and the mutation should handle them as per its v.optional() schema.
+      status: typeof body.status === 'string' && !isNaN(Number(body.status)) ? Number(body.status) : null,
+      channel: typeof body.channel === 'string' && !isNaN(Number(body.channel)) ? Number(body.channel) : null,
+
+      // Required fields that were missing
+      link: typeof body.link_slug === 'string' ? body.link_slug : "",
+      original_id: null,
+      author_wpid: null,
+      sponsored_position: typeof body.sponsored_position === 'string' && !isNaN(Number(body.sponsored_position))
+        ? Number(body.sponsored_position)
+        : null,
+      channel_url: null,
+      secondary_channel: typeof body.secondary_channel === 'string' && !isNaN(Number(body.secondary_channel))
+        ? Number(body.secondary_channel)
+        : null,
+      secondary_channel_url: null,
+      publish_date: typeof body.publish_date === 'string' ? body.publish_date : new Date().toISOString().split('T')[0],
+      last_updated: typeof body.last_updated === 'string' ? body.last_updated : new Date().toISOString(),
+      image_url: typeof body.image === 'string' ? body.image : null,
+      seo_meta: "",
       subtitle: typeof body.subtitle === 'string' ? body.subtitle : "",
-      link_slug: typeof body.link_slug === 'string' ? body.link_slug : "",
-      link_preview: typeof body.link_preview === 'string' ? body.link_preview : "",
-      publish_date: typeof body.publish_date === 'string' ? body.publish_date : "", // Consider date validation
-      publish_time: typeof body.publish_time === 'string' ? body.publish_time : "", // Consider time validation
-      image: typeof body.image === 'string' ? body.image : "",
-      audio_file: typeof body.audio_file === 'string' ? body.audio_file : "",
-      audio_url: typeof body.audio_url === 'string' ? body.audio_url : "",
-      video_title: typeof body.video_title === 'string' ? body.video_title : "",
-      video_url: typeof body.video_url === 'string' ? body.video_url : "",
-      chart_image: typeof body.chart_image === 'string' ? body.chart_image : "",
-      transcript: typeof body.transcript === 'string' ? body.transcript : "",
-      include_in_article_rss: typeof body.include_in_article_rss === 'boolean' ? body.include_in_article_rss : false,
-      include_in_podcast_rss: includeInPodcastRss, // Already handled above
-      secondary_channel: typeof body.secondary_channel === 'string' ? body.secondary_channel : "",
-      placefilter: typeof body.placefilter === 'string' ? body.placefilter : "",
-      fresh_finance_category: typeof body.fresh_finance_category === 'string' ? body.fresh_finance_category : "",
-      source_link: typeof body.source_link === 'string' ? body.source_link : "",
-      white_paper_pdf: typeof body.white_paper_pdf === 'string' ? body.white_paper_pdf : "",
-      sponsored_position: typeof body.sponsored_position === 'string' ? body.sponsored_position : "None", // Default if not string
-      last_updated: typeof body.last_updated === 'string' ? body.last_updated : new Date().toISOString(), // Default to now
+      placefilter: typeof body.placefilter === 'string' && !isNaN(Number(body.placefilter))
+        ? Number(body.placefilter)
+        : null,
+      rss_include: typeof body.include_in_article_rss === 'boolean' && body.include_in_article_rss ? 1 : 0,
+      podcast_rss_include: typeof body.include_in_podcast_rss === 'string' && !isNaN(Number(body.include_in_podcast_rss))
+        ? Number(body.include_in_podcast_rss)
+        : 0,
+      fresh_finance_category: typeof body.fresh_finance_category === 'string' ? body.fresh_finance_category : null,
+      chart_url: typeof body.chart_image === 'string' ? body.chart_image : null,
+      source_link: typeof body.source_link === 'string' ? body.source_link : null,
+      video_url: typeof body.video_url === 'string' ? body.video_url : null,
+      video_title: typeof body.video_title === 'string' ? body.video_title : null,
+      audio_url: typeof body.audio_url === 'string' ? body.audio_url : null,
+      audio_file: typeof body.audio_file === 'string' ? body.audio_file : null,
+      transcript: typeof body.transcript === 'string' ? body.transcript : null,
+      white_paper_pdf: typeof body.white_paper_pdf === 'string' ? body.white_paper_pdf : null,
+      other: "",
+      other_meta: "",
+      toolset_associations_contributor_post: null,
+      wpcf_publishdate: null,
+      author_id: typeof body.author === 'string' && !isNaN(Number(body.author)) ? Number(body.author) : null,
     };
 
     try {
@@ -126,6 +141,152 @@ http.route({
       // It's good practice to not expose raw error messages to the client.
       // You might have a more sophisticated error handling/logging mechanism.
       return new Response(JSON.stringify({ error: "Failed to create article on the server.", details: error.message }), {
+        headers: { "Content-Type": "application/json" },
+        status: 500, // Internal Server Error
+      });
+    }
+  }),
+});
+
+// New endpoint to create an agent thread
+http.route({
+  path: "/createAgentThread",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    // --- API Key Authentication --- 
+    const expectedApiKey = process.env.CREATE_ARTICLE_API_KEY; // Using the same API key as createArticle
+
+    if (!expectedApiKey) {
+      console.error("CRITICAL: CREATE_ARTICLE_API_KEY environment variable is not set.");
+      return new Response(JSON.stringify({ error: "API authentication is not configured on the server." }), {
+        headers: { "Content-Type": "application/json" },
+        status: 500, // Internal Server Error
+      });
+    }
+
+    const providedApiKey = request.headers.get("X-API-Key");
+
+    if (!providedApiKey) {
+      return new Response(JSON.stringify({ error: "API key is missing in X-API-Key header." }), {
+        headers: { "Content-Type": "application/json" },
+        status: 401, // Unauthorized
+      });
+    }
+
+    if (providedApiKey !== expectedApiKey) {
+      return new Response(JSON.stringify({ error: "Invalid API key." }), {
+        headers: { "Content-Type": "application/json" },
+        status: 403, // Forbidden
+      });
+    }
+    // --- End API Key Authentication ---
+
+    let body;
+    try {
+      body = await request.json();
+    } catch (e) {
+      return new Response(JSON.stringify({ error: "Invalid JSON in request body." }), {
+        headers: { "Content-Type": "application/json" },
+        status: 400,
+      });
+    }
+
+    // Validate and prepare the args for createAgentThread
+    const threadArgs = {
+      userId: body.userId, // Optional user ID
+      title: body.title, // Optional thread title
+    };
+
+    try {
+      const threadId = await ctx.runMutation(api.threadMutations.createAgentThread, threadArgs);
+      return new Response(JSON.stringify({ threadId }), {
+        headers: { "Content-Type": "application/json" },
+        status: 201, // Created
+      });
+    } catch (error: any) {
+      console.error("Failed to create agent thread:", error);
+      return new Response(JSON.stringify({ error: "Failed to create agent thread.", details: error.message }), {
+        headers: { "Content-Type": "application/json" },
+        status: 500, // Internal Server Error
+      });
+    }
+  }),
+});
+
+// New endpoint to send a message to an agent thread
+http.route({
+  path: "/sendMessageToAgent",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    // --- API Key Authentication --- 
+    const expectedApiKey = process.env.CREATE_ARTICLE_API_KEY; // Using the same API key as createArticle
+
+    if (!expectedApiKey) {
+      console.error("CRITICAL: CREATE_ARTICLE_API_KEY environment variable is not set.");
+      return new Response(JSON.stringify({ error: "API authentication is not configured on the server." }), {
+        headers: { "Content-Type": "application/json" },
+        status: 500, // Internal Server Error
+      });
+    }
+
+    const providedApiKey = request.headers.get("X-API-Key");
+
+    if (!providedApiKey) {
+      return new Response(JSON.stringify({ error: "API key is missing in X-API-Key header." }), {
+        headers: { "Content-Type": "application/json" },
+        status: 401, // Unauthorized
+      });
+    }
+
+    if (providedApiKey !== expectedApiKey) {
+      return new Response(JSON.stringify({ error: "Invalid API key." }), {
+        headers: { "Content-Type": "application/json" },
+        status: 403, // Forbidden
+      });
+    }
+    // --- End API Key Authentication ---
+
+    let body;
+    try {
+      body = await request.json();
+    } catch (e) {
+      return new Response(JSON.stringify({ error: "Invalid JSON in request body." }), {
+        headers: { "Content-Type": "application/json" },
+        status: 400,
+      });
+    }
+
+    // Basic validation for required fields
+    if (!body.threadId || typeof body.threadId !== 'string') {
+      return new Response(JSON.stringify({ error: "Missing or invalid threadId. Expected string." }), {
+        headers: { "Content-Type": "application/json" },
+        status: 400,
+      });
+    }
+
+    if (!body.prompt || typeof body.prompt !== 'string') {
+      return new Response(JSON.stringify({ error: "Missing or invalid prompt. Expected string." }), {
+        headers: { "Content-Type": "application/json" },
+        status: 400,
+      });
+    }
+
+    // Prepare the arguments for sendMessageToAgent
+    const messageArgs = {
+      threadId: body.threadId,
+      prompt: body.prompt,
+      userId: body.userId, // Optional
+    };
+
+    try {
+      const response = await ctx.runAction(api.agent.sendMessageToAgent, messageArgs);
+      return new Response(JSON.stringify(response), {
+        headers: { "Content-Type": "application/json" },
+        status: 200,
+      });
+    } catch (error: any) {
+      console.error("Failed to send message to agent:", error);
+      return new Response(JSON.stringify({ error: "Failed to send message to agent.", details: error.message }), {
         headers: { "Content-Type": "application/json" },
         status: 500, // Internal Server Error
       });

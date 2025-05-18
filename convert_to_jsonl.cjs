@@ -2,8 +2,8 @@ const fs = require('fs');
 const JSONStream = require('JSONStream');
 const path = require('path');
 
-const inputFile = path.join(__dirname, 'advisorpedia_channels.json');
-const outputFile = path.join(__dirname, 'advisorpedia_channels.jsonl');
+const inputFile = path.join(__dirname, 'advisorpedia_articles-2514-3018.json');
+const outputFile = path.join(__dirname, 'advisorpedia_articles-2514-3018.jsonl');
 
 console.log('Starting conversion: ' + inputFile + ' -> ' + outputFile);
 
