@@ -79,6 +79,7 @@ export const sendMessageToAgent = action({
     sources: v.optional(v.array(v.object({
       title: v.string(),
       link: v.string(),
+      truncatedContent: v.string(),
     }))),
   }),
   handler: async (ctx, args) => {
@@ -91,7 +92,7 @@ export const sendMessageToAgent = action({
       prompt: args.prompt,
     });
 
-    let sources: { title: string, link: string }[] | undefined = undefined;
+    let sources: { title: string, link: string, truncatedContent: string }[] | undefined = undefined;
 
     try {
       if (agentResponse.request?.body && typeof agentResponse.request.body === 'string') {
@@ -123,7 +124,11 @@ export const sendMessageToAgent = action({
                     sources = []; // Initialize as an empty array
                     for (const article of toolResponseContent) {
                       if (article && article.reconstructedLink && article.title) {
-                        sources.push({ title: article.title, link: article.reconstructedLink });
+                        sources.push({
+                          title: article.title,
+                          link: article.reconstructedLink,
+                          truncatedContent: article.content.substring(0, 300) + (article.content.length > 300 ? "..." : "")
+                        });
                       }
                     }
                     if (sources.length > 0) {

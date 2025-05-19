@@ -2,6 +2,7 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { api } from "./_generated/api"; // To call your queries/mutations
+import { Id } from "./_generated/dataModel";
 
 const http = httpRouter();
 
@@ -10,11 +11,43 @@ http.route({
   path: "/getArticles", // This will be accessible at https://<your-convex-url>/getArticles
   method: "GET",
   handler: httpAction(async (ctx, request) => {
-    // You can call your existing query here
-    const articles = await ctx.runQuery(api.articles.get); // Assuming 'articles.get' is your query
+    // Handle CORS preflight request
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+          "Access-Control-Max-Age": "86400",
+        },
+      });
+    }
 
-    return new Response(JSON.stringify(articles), {
-      headers: { "Content-Type": "application/json" },
+    // Get pagination parameters from URL query params
+    const url = new URL(request.url);
+    const numItemsParam = url.searchParams.get("numItems");
+    const cursorParam = url.searchParams.get("cursor");
+
+    // Default to 50 items if not specified, cap at 100 for performance
+    const numItems = numItemsParam ? Math.min(parseInt(numItemsParam, 10), 100) : 50;
+
+    // Set up pagination options
+    const paginationOpts = {
+      numItems,
+      cursor: cursorParam || null,
+    };
+
+    // You can call your existing query here
+    const articlesPage = await ctx.runQuery(api.articles.get, { paginationOpts });
+
+    return new Response(JSON.stringify(articlesPage), {
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+      },
       status: 200,
     });
   }),
@@ -289,6 +322,186 @@ http.route({
       return new Response(JSON.stringify({ error: "Failed to send message to agent.", details: error.message }), {
         headers: { "Content-Type": "application/json" },
         status: 500, // Internal Server Error
+      });
+    }
+  }),
+});
+
+// Endpoint to get articles by channel
+http.route({
+  path: "/getArticlesByChannel",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    // Handle CORS preflight request
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+          "Access-Control-Max-Age": "86400",
+        },
+      });
+    }
+
+    // Get parameters from URL query params
+    const url = new URL(request.url);
+    const channelParam = url.searchParams.get("channel");
+    const numItemsParam = url.searchParams.get("numItems");
+    const cursorParam = url.searchParams.get("cursor");
+
+    // Validate required parameters
+    if (!channelParam || isNaN(parseInt(channelParam, 10))) {
+      return new Response(JSON.stringify({
+        error: "Missing or invalid channel parameter. Must provide a valid channel ID number."
+      }), {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+        },
+        status: 400,
+      });
+    }
+
+    // Convert and prepare parameters
+    const channel = parseInt(channelParam, 10);
+    const numItems = numItemsParam ? parseInt(numItemsParam, 10) : undefined;
+
+    // Call the getByChannel query
+    try {
+      const articlesPage = await ctx.runQuery(api.articles.getByChannel, {
+        channel,
+        cursor: cursorParam || undefined,
+        numItems,
+      });
+
+      return new Response(JSON.stringify(articlesPage), {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+        },
+        status: 200,
+      });
+    } catch (error) {
+      console.error("Error fetching articles by channel:", error);
+      return new Response(JSON.stringify({
+        error: "Failed to fetch articles by channel",
+        details: error instanceof Error ? error.message : String(error)
+      }), {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+        },
+        status: 500,
+      });
+    }
+  }),
+});
+
+// Endpoint to get articles by their original_ids
+http.route({
+  path: "/getArticlesByOriginalIds",
+  method: "POST", // Using POST to handle array of IDs in request body
+  handler: httpAction(async (ctx, request) => {
+    // Define CORS headers for consistent use
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
+      "Access-Control-Allow-Headers": "Content-Type, X-API-Key, Authorization",
+      "Access-Control-Max-Age": "86400",
+    };
+
+    // Handle CORS preflight request
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders,
+      });
+    }
+
+    // Parse request body
+    let body;
+    try {
+      body = await request.json();
+    } catch (e) {
+      return new Response(JSON.stringify({
+        error: "Invalid JSON in request body"
+      }), {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+        status: 400,
+      });
+    }
+
+    // Validate originalIds
+    if (!body.originalIds || !Array.isArray(body.originalIds) || body.originalIds.length === 0) {
+      return new Response(JSON.stringify({
+        error: "Request must include a non-empty array of originalIds"
+      }), {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+        status: 400,
+      });
+    }
+
+    // Convert and validate each original_id is a number
+    const originalIds: number[] = [];
+    try {
+      for (const id of body.originalIds) {
+        const numId = Number(id);
+        if (isNaN(numId)) {
+          throw new Error(`Invalid original_id: ${id} is not a number`);
+        }
+        originalIds.push(numId);
+      }
+    } catch (error) {
+      return new Response(JSON.stringify({
+        error: "Invalid original_id format. All IDs must be numbers",
+        details: error instanceof Error ? error.message : String(error)
+      }), {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+        status: 400,
+      });
+    }
+
+    // Call the query
+    try {
+      const articles = await ctx.runQuery(api.articles.getArticlesByOriginalIds, {
+        originalIds
+      });
+
+      return new Response(JSON.stringify(articles), {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+        status: 200,
+      });
+    } catch (error) {
+      console.error("Error fetching articles by original_ids:", error);
+      return new Response(JSON.stringify({
+        error: "Failed to fetch articles by original_ids",
+        details: error instanceof Error ? error.message : String(error)
+      }), {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+        status: 500,
       });
     }
   }),

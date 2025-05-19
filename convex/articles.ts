@@ -53,6 +53,18 @@ export const ArticleDocValidator = v.object({
 });
 
 export const get = query({
+  args: {
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.query("articles")
+      .order("desc")
+      .paginate(args.paginationOpts);
+  },
+});
+
+// Legacy function that returns all articles (not recommended)
+export const getAll = query({
   args: {},
   handler: async (ctx) => {
     return await ctx.db.query("articles").collect();
@@ -314,6 +326,44 @@ export const getArticlesByChannelId = query({
       .withIndex("by_channel", (q) => q.eq("channel", args.channelId))
       .order("desc") // Get most recent first, or any order
       .take(args.limit ?? 3); // Default to 3 if limit not provided
+    return articles;
+  },
+});
+
+// Query to fetch articles by their IDs
+export const getArticlesByIds = query({
+  args: {
+    articleIds: v.array(v.id("articles"))
+  },
+  returns: v.array(ArticleDocValidator),
+  handler: async (ctx, args): Promise<Doc<"articles">[]> => {
+    // Reuse our internal query to fetch the articles by IDs
+    return await ctx.runQuery(internal.articles.fetchArticleDataByIds, {
+      ids: args.articleIds
+    });
+  },
+});
+
+// Query to fetch articles by their original_ids
+export const getArticlesByOriginalIds = query({
+  args: {
+    originalIds: v.array(v.number())
+  },
+  returns: v.array(ArticleDocValidator),
+  handler: async (ctx, args): Promise<Doc<"articles">[]> => {
+    const articles: Doc<"articles">[] = [];
+
+    // Fetch each article by original_id using the index
+    for (const originalId of args.originalIds) {
+      const article = await ctx.db.query("articles")
+        .withIndex("by_original_id", (q) => q.eq("original_id", originalId))
+        .unique();
+
+      if (article) {
+        articles.push(article);
+      }
+    }
+
     return articles;
   },
 });
