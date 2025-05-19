@@ -182,14 +182,41 @@ export const findArticlesWithMissingEmbeddings = query({
 
 // fix missing embeddings
 export const fixMissingEmbeddings = mutation({
-  args: {},
-  returns: v.string(),
-  handler: async (ctx) => {
-    const articlesToFix: Doc<"articles">[] = await ctx.runQuery(api.articles.findArticlesWithMissingEmbeddings, {});
+  args: {
+    limit: v.optional(v.number()),
+    cursor: v.optional(v.string()),
+  },
+  returns: v.object({
+    processed: v.number(),
+    total: v.number(),
+    message: v.string(),
+    isDone: v.boolean(),
+    continueCursor: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    // Get a paginated batch of articles with missing embeddings
+    const batchSize = args.limit ?? 50; // Process 50 articles at a time by default
+
+    // Use pagination to get a batch of articles with missing embeddings
+    const articlesPage = await ctx.db.query("articles")
+      .filter((q) => q.eq(q.field("embedding"), undefined))
+      .paginate({
+        cursor: args.cursor ?? null,
+        numItems: batchSize
+      });
+
+    const articlesToFix = articlesPage.page;
+    // We can't get an exact count easily, so we'll report on the current batch
+    // and let the client know if there are more via isDone
 
     if (articlesToFix.length === 0) {
-      console.log("No articles found with missing embeddings.");
-      return "No articles found with missing embeddings.";
+      return {
+        processed: 0,
+        total: 0,
+        message: "No more articles found with missing embeddings.",
+        isDone: true,
+        continueCursor: null
+      };
     }
 
     let fixedCount = 0;
@@ -199,7 +226,7 @@ export const fixMissingEmbeddings = mutation({
       const subtitle = article.subtitle;
       const link = article.link;
 
-      if (article._id && title && content && subtitle && link) {
+      if (article._id && title && content) {
         let textToEmbed = (title || "") + "\n\n" + (content || "") + "\n\n" + (subtitle || "") + "\n\n" + (link || "");
         if (textToEmbed.length > MAX_EMBEDDING_TEXT_CHARS) {
           textToEmbed = textToEmbed.substring(0, MAX_EMBEDDING_TEXT_CHARS);
@@ -219,9 +246,17 @@ export const fixMissingEmbeddings = mutation({
         console.warn(`Skipping article due to missing critical fields for embedding: ${article._id} (Title: ${title ? title.substring(0, 30) : 'N/A'}...)`);
       }
     }
-    const resultMessage: string = `Attempted to schedule embedding generation for ${fixedCount} out of ${articlesToFix.length} articles found with missing embeddings.`;
+
+    const resultMessage = `Processed batch: Scheduled embedding generation for ${fixedCount} out of ${articlesToFix.length} articles.`;
     console.log(resultMessage);
-    return resultMessage;
+
+    return {
+      processed: fixedCount,
+      total: articlesToFix.length,
+      message: resultMessage,
+      isDone: articlesPage.isDone,
+      continueCursor: articlesPage.continueCursor
+    };
   },
 });
 

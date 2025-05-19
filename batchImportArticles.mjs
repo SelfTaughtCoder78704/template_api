@@ -9,7 +9,7 @@ dotenv.config();
 
 // --- Configuration ---
 const CONVEX_URL = 'https://shocking-albatross-305.convex.cloud'; // !! REPLACE THIS !!
-const INPUT_JSONL_FILE = "./advisorpedia_articles-2514-3018.jsonl"; // Or your actual file path
+const INPUT_JSONL_FILE = "./advisorpedia_articles-3019-3521.jsonl"; // Or your actual file path
 const MUTATIONS_PER_BATCH = 10;
 const DELAY_BETWEEN_MUTATIONS_MS = 500; // 0.5 seconds
 const DELAY_AFTER_BATCH_MS = 10000;   // 10 seconds
