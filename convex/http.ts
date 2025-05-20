@@ -507,5 +507,51 @@ http.route({
   }),
 });
 
+// Add a new route for Strapi webhook logging
+http.route({
+  path: "/strapiWebhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    // Handle CORS preflight request
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+          "Access-Control-Max-Age": "86400",
+        },
+      });
+    }
+
+    // Log the raw request headers for debugging
+    const headersObj: Record<string, string> = {};
+    request.headers.forEach((value, key) => {
+      headersObj[key] = value;
+    });
+    console.log("Strapi Webhook Headers:", headersObj);
+
+    // Parse and log the request body
+    let body;
+    try {
+      body = await request.json();
+      console.log("Strapi Webhook Payload:", JSON.stringify(body, null, 2));
+    } catch (e) {
+      console.error("Error parsing Strapi webhook payload:", e);
+      return new Response(JSON.stringify({ error: "Invalid JSON in request body" }), {
+        headers: { "Content-Type": "application/json" },
+        status: 400,
+      });
+    }
+
+    // Return a successful response
+    return new Response(JSON.stringify({ success: true, message: "Webhook received and logged" }), {
+      headers: { "Content-Type": "application/json" },
+      status: 200,
+    });
+  }),
+});
+
 // You must export the http router as the default export
 export default http;
