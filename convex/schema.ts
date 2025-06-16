@@ -37,11 +37,12 @@ export default defineSchema({
     wpcf_publishdate: v.union(v.number(), v.null()),
     author_id: v.union(v.number(), v.null()),
     embedding: v.optional(v.array(v.float64())),
+    strapi_document_id: v.optional(v.string()), // For tracking Strapi articles across publish/unpublish cycles
   }).vectorIndex("by_embedding", {
     vectorField: "embedding",
     dimensions: 1536,
     filterFields: ["channel", "status"]
-  }).index("by_author_wpid", ["author_wpid"]).index("by_author_id", ["author_id"]).index("by_channel", ["channel"]).index("by_original_id", ["original_id"]),
+  }).index("by_author_wpid", ["author_wpid"]).index("by_author_id", ["author_id"]).index("by_channel", ["channel"]).index("by_original_id", ["original_id"]).index("by_strapi_document_id", ["strapi_document_id"]),
 
   contributors: defineTable({
     original_id: v.number(),

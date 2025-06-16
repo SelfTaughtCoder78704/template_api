@@ -507,7 +507,71 @@ http.route({
   }),
 });
 
-// Add a new route for Strapi webhook logging
+// Helper function to map placefilter values
+function mapPlacefilter(strapiValue: string | null): number | null {
+  if (!strapiValue) return null;
+  const mapping: Record<string, number> = {
+    "Latest": 0,
+    "Trending": 1,
+    "Featured": 2
+  };
+  return mapping[strapiValue] ?? 0; // Default to Latest
+}
+
+// Helper function to transform Strapi entry data to Convex format
+function mapStrapiToConvex(entry: any) {
+  return {
+    // IDs and relations
+    original_id: entry.original_id,
+    channel: entry.channel?.original_id || null,
+    author_wpid: entry.contributor?.wp_user_id || null,
+    author_id: entry.contributor?.original_id || null, // Contributor's original_id maps to author_id
+    strapi_document_id: entry.documentId, // For tracking Strapi articles across publish/unpublish cycles
+
+    // Required string fields - convert null to empty string
+    title: entry.title || "",
+    link: entry.link || "",
+    content: entry.content || "",
+    subtitle: entry.subtitle || "",
+    seo_meta: entry.seo_meta || "",
+    other: entry.other || "",
+    other_meta: entry.other_meta || "",
+
+    // Required dates - provide defaults
+    publish_date: entry.publish_date ?
+      new Date(entry.publish_date).toISOString().split('T')[0] :
+      new Date().toISOString().split('T')[0],
+    last_updated: new Date().toISOString(),
+
+    // Numeric fields
+    sponsored_position: entry.sponsored_position || null,
+    rss_include: entry.rss_include ? 1 : 0,
+    podcast_rss_include: entry.podcast_rss_include || 0,
+    placefilter: mapPlacefilter(entry.placefilter),
+    status: 1, // Default status for new articles
+
+    // Optional fields that can be null
+    source_link: entry.source_link,
+    image_url: entry.image_url,
+    video_url: entry.video_url,
+    video_title: entry.video_title,
+    audio_url: entry.audio_url,
+    audio_file: entry.audio_file,
+    transcript: entry.transcript,
+    white_paper_pdf: entry.white_paper_pdf,
+    chart_url: entry.chart_url,
+    fresh_finance_category: entry.fresh_finance_category,
+
+    // Legacy fields
+    channel_url: entry.channel_url,
+    secondary_channel: entry.secondary_channel,
+    secondary_channel_url: entry.secondary_channel_url,
+    toolset_associations_contributor_post: entry.toolset_associations_contributor_post,
+    wpcf_publishdate: entry.wpcf_publishdate,
+  };
+}
+
+// Add a new route for Strapi webhook processing
 http.route({
   path: "/strapiWebhook",
   method: "POST",
@@ -525,18 +589,11 @@ http.route({
       });
     }
 
-    // Log the raw request headers for debugging
-    const headersObj: Record<string, string> = {};
-    request.headers.forEach((value, key) => {
-      headersObj[key] = value;
-    });
-    console.log("Strapi Webhook Headers:", headersObj);
-
-    // Parse and log the request body
+    // Parse the request body
     let body;
     try {
       body = await request.json();
-      console.log("Strapi Webhook Payload:", JSON.stringify(body, null, 2));
+      console.log("Strapi Webhook Event:", body.event, "for article:", body.entry?.title);
     } catch (e) {
       console.error("Error parsing Strapi webhook payload:", e);
       return new Response(JSON.stringify({ error: "Invalid JSON in request body" }), {
@@ -545,11 +602,89 @@ http.route({
       });
     }
 
-    // Return a successful response
-    return new Response(JSON.stringify({ success: true, message: "Webhook received and logged" }), {
-      headers: { "Content-Type": "application/json" },
-      status: 200,
-    });
+    // Only process publish events (ignore create/update drafts)
+    if (body.event !== "entry.publish") {
+      console.log(`Ignoring ${body.event} event - only processing entry.publish`);
+      return new Response(JSON.stringify({
+        success: true,
+        message: `Event ${body.event} ignored - only processing entry.publish`
+      }), {
+        headers: { "Content-Type": "application/json" },
+        status: 200,
+      });
+    }
+
+    // Validate we have entry data
+    if (!body.entry) {
+      return new Response(JSON.stringify({ error: "Missing entry data in webhook payload" }), {
+        headers: { "Content-Type": "application/json" },
+        status: 400,
+      });
+    }
+
+    try {
+      // Check if article already exists by Strapi document ID
+      const existingArticle = await ctx.runQuery(api.articles.getByDocumentId, {
+        documentId: body.entry.documentId
+      });
+
+      // Transform Strapi data to Convex format
+      const transformedData = mapStrapiToConvex(body.entry);
+
+      if (existingArticle) {
+        // Update existing article
+        await ctx.runMutation(api.articles.updateArticle, {
+          articleId: existingArticle._id,
+          ...transformedData
+        });
+
+        console.log(`Successfully updated article ${existingArticle._id} from Strapi entry ${body.entry.id} (${body.entry.title})`);
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: "Article updated successfully",
+          action: "update",
+          articleId: existingArticle._id,
+          strapiId: body.entry.id,
+          documentId: body.entry.documentId,
+          title: body.entry.title
+        }), {
+          headers: { "Content-Type": "application/json" },
+          status: 200,
+        });
+      } else {
+        // Create new article
+        const articleId = await ctx.runMutation(api.articles.createArticle, transformedData);
+
+        console.log(`Successfully created article ${articleId} from Strapi entry ${body.entry.id} (${body.entry.title})`);
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: "Article created successfully",
+          action: "create",
+          articleId: articleId,
+          strapiId: body.entry.id,
+          documentId: body.entry.documentId,
+          title: body.entry.title
+        }), {
+          headers: { "Content-Type": "application/json" },
+          status: 201,
+        });
+      }
+
+    } catch (error: any) {
+      console.error("Failed to process article from Strapi webhook:", error);
+      return new Response(JSON.stringify({
+        error: "Failed to process article",
+        details: error.message,
+        strapiId: body.entry?.id,
+        documentId: body.entry?.documentId,
+        title: body.entry?.title
+      }), {
+        headers: { "Content-Type": "application/json" },
+        status: 500,
+      });
+    }
   }),
 });
 
