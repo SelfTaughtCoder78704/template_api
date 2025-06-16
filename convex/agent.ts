@@ -82,8 +82,31 @@ export const sendMessageToAgent = action({
       link: v.string(),
       truncatedContent: v.string(),
     }))),
+    usage: v.optional(v.object({
+      promptTokens: v.optional(v.number()),
+      completionTokens: v.optional(v.number()),
+      totalTokens: v.optional(v.number()),
+      // OpenAI-specific metadata
+      cachedPromptTokens: v.optional(v.number()),
+      reasoningTokens: v.optional(v.number()),
+      acceptedPredictionTokens: v.optional(v.number()),
+      rejectedPredictionTokens: v.optional(v.number()),
+    })),
   }),
-  handler: async (ctx, args): Promise<{ threadId: string, responseText: string, sources?: { title: string, link: string, truncatedContent: string }[] }> => {
+  handler: async (ctx, args): Promise<{
+    threadId: string,
+    responseText: string,
+    sources?: { title: string, link: string, truncatedContent: string }[],
+    usage?: {
+      promptTokens?: number,
+      completionTokens?: number,
+      totalTokens?: number,
+      cachedPromptTokens?: number,
+      reasoningTokens?: number,
+      acceptedPredictionTokens?: number,
+      rejectedPredictionTokens?: number,
+    }
+  }> => {
     let thread: any;
     let threadId: string;
 
@@ -129,7 +152,50 @@ export const sendMessageToAgent = action({
     });
 
     let sources: { title: string, link: string, truncatedContent: string }[] | undefined = undefined;
+    let usage: {
+      promptTokens?: number,
+      completionTokens?: number,
+      totalTokens?: number,
+      cachedPromptTokens?: number,
+      reasoningTokens?: number,
+      acceptedPredictionTokens?: number,
+      rejectedPredictionTokens?: number,
+    } | undefined = undefined;
 
+    // Extract usage information from agentResponse
+    try {
+      if (agentResponse.usage) {
+        usage = {
+          promptTokens: agentResponse.usage.promptTokens,
+          completionTokens: agentResponse.usage.completionTokens,
+          totalTokens: agentResponse.usage.totalTokens,
+        };
+
+        // Add OpenAI-specific metadata if available
+        if (agentResponse.providerMetadata?.openai) {
+          const openaiMetadata = agentResponse.providerMetadata.openai;
+          if (openaiMetadata.cachedPromptTokens !== undefined) {
+            usage.cachedPromptTokens = openaiMetadata.cachedPromptTokens;
+          }
+          if (openaiMetadata.reasoningTokens !== undefined) {
+            usage.reasoningTokens = openaiMetadata.reasoningTokens;
+          }
+          if (openaiMetadata.acceptedPredictionTokens !== undefined) {
+            usage.acceptedPredictionTokens = openaiMetadata.acceptedPredictionTokens;
+          }
+          if (openaiMetadata.rejectedPredictionTokens !== undefined) {
+            usage.rejectedPredictionTokens = openaiMetadata.rejectedPredictionTokens;
+          }
+        }
+
+        // Log usage for monitoring (can be removed in production)
+        console.log(`[sendMessageToAgent] Token usage - Prompt: ${usage.promptTokens}, Completion: ${usage.completionTokens}, Total: ${usage.totalTokens}${usage.cachedPromptTokens ? `, Cached: ${usage.cachedPromptTokens}` : ''}${usage.reasoningTokens ? `, Reasoning: ${usage.reasoningTokens}` : ''}`);
+      }
+    } catch (e) {
+      console.error("[sendMessageToAgent] Error extracting usage information:", e);
+    }
+
+    // Extract sources information (existing logic)
     try {
       if (agentResponse.request?.body && typeof agentResponse.request.body === 'string') {
         const requestBody = JSON.parse(agentResponse.request.body);
@@ -188,6 +254,7 @@ export const sendMessageToAgent = action({
       threadId: threadId,
       responseText: agentResponse.text ?? "",
       sources,
+      usage,
     };
   },
 }); 
