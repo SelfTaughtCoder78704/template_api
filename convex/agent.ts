@@ -2,7 +2,7 @@
 
 import { v } from "convex/values";
 import { Agent, createTool } from "@convex-dev/agent";
-import { internal, components } from "./_generated/api";
+import { internal, components, api } from "./_generated/api";
 import { action } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
 import { z } from "zod";
@@ -70,11 +70,12 @@ export const articleAgent = new Agent(components.agent, {
 // Public action to send a message to an agent thread
 export const sendMessageToAgent = action({
   args: {
-    threadId: v.string(),
+    threadId: v.optional(v.string()),
     prompt: v.string(),
     userId: v.optional(v.id("users")),
   },
   returns: v.object({
+    threadId: v.string(),
     responseText: v.string(),
     sources: v.optional(v.array(v.object({
       title: v.string(),
@@ -82,13 +83,48 @@ export const sendMessageToAgent = action({
       truncatedContent: v.string(),
     }))),
   }),
-  handler: async (ctx, args) => {
-    const { thread } = await articleAgent.continueThread(ctx, {
-      threadId: args.threadId,
-      userId: args.userId
-    });
+  handler: async (ctx, args): Promise<{ threadId: string, responseText: string, sources?: { title: string, link: string, truncatedContent: string }[] }> => {
+    let thread: any;
+    let threadId: string;
 
-    const agentResponse = await thread.generateText({
+    // If threadId is provided, try to continue existing thread
+    if (args.threadId) {
+      try {
+        const result: any = await articleAgent.continueThread(ctx, {
+          threadId: args.threadId,
+          userId: args.userId
+        });
+        thread = result.thread;
+        threadId = args.threadId;
+      } catch (error) {
+        // If continuing thread fails, create a new one
+        console.log("Failed to continue thread, creating new one:", error);
+        const newThreadId: string = await ctx.runMutation(api.threadMutations.createAgentThread, {
+          userId: args.userId,
+          title: "New Article Agent Thread"
+        });
+        const result: any = await articleAgent.continueThread(ctx, {
+          threadId: newThreadId,
+          userId: args.userId
+        });
+        thread = result.thread;
+        threadId = newThreadId;
+      }
+    } else {
+      // No threadId provided, create a new thread
+      const newThreadId: string = await ctx.runMutation(api.threadMutations.createAgentThread, {
+        userId: args.userId,
+        title: "New Article Agent Thread"
+      });
+      const result: any = await articleAgent.continueThread(ctx, {
+        threadId: newThreadId,
+        userId: args.userId
+      });
+      thread = result.thread;
+      threadId = newThreadId;
+    }
+
+    const agentResponse: any = await thread.generateText({
       prompt: args.prompt,
     });
 
@@ -149,6 +185,7 @@ export const sendMessageToAgent = action({
     }
 
     return {
+      threadId: threadId,
       responseText: agentResponse.text ?? "",
       sources,
     };

@@ -9,8 +9,8 @@ dotenv.config();
 
 // --- Configuration ---
 const CONVEX_URL = 'https://shocking-albatross-305.convex.cloud'; // !! REPLACE THIS !!
-const INPUT_JSONL_FILE = "./advisorpedia_articles-4530-5031.jsonl"; // Or your actual file path
-const MUTATIONS_PER_BATCH = 10;
+const INPUT_JSONL_FILE = "./advisorpedia_articles-12062-13062.jsonl"; // Or your actual file path
+const MUTATIONS_PER_BATCH = 20;
 const DELAY_BETWEEN_MUTATIONS_MS = 500; // 0.5 seconds
 const DELAY_AFTER_BATCH_MS = 10000;   // 10 seconds
 const START_FROM_LINE = 1; // New configuration: Line number to start processing from (1-indexed)
@@ -69,9 +69,9 @@ async function processLine(line) {
     // --- End Data Mapping ---
 
     await convex.mutation(api.articles.createArticle, argsForCreateArticle);
-    console.log('SUCCESS: Imported article original_id: ' + articleDataFromLine.id + ' - "' + articleDataFromLine.title.substring(0, 50) + '..."');
+    console.log('SUCCESS: Imported article original_id: ' + articleDataFromLine.original_id + ' - "' + articleDataFromLine.title.substring(0, 50) + '..."');
   } catch (error) {
-    const originalId = articleDataFromLine && articleDataFromLine.id ? articleDataFromLine.id : "UNKNOWN_ID";
+    const originalId = articleDataFromLine && articleDataFromLine.original_id ? articleDataFromLine.original_id : "UNKNOWN_ID";
     console.error('ERROR importing article (original_id: ' + originalId + ', data: ' + line.substring(0, 100) + '...):', error);
   }
 }
