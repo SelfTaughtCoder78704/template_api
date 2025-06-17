@@ -42,7 +42,7 @@ export default defineSchema({
     vectorField: "embedding",
     dimensions: 1536,
     filterFields: ["channel", "status"]
-  }).index("by_author_wpid", ["author_wpid"]).index("by_author_id", ["author_id"]).index("by_channel", ["channel"]).index("by_original_id", ["original_id"]).index("by_strapi_document_id", ["strapi_document_id"]),
+  }).index("by_author_wpid", ["author_wpid"]).index("by_author_id", ["author_id"]).index("by_channel", ["channel"]).index("by_original_id", ["original_id"]).index("by_strapi_document_id", ["strapi_document_id"]).index("by_embedding_status", ["embedding"]),
 
   contributors: defineTable({
     original_id: v.number(),

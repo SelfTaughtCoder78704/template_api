@@ -187,10 +187,14 @@ export const fetchArticleDataByIds = internalQuery({
 
 // find articles with missing embeddings
 export const findArticlesWithMissingEmbeddings = query({
-  args: {},
-  returns: v.array(ArticleDocValidator),
-  handler: async (ctx) => {
-    return await ctx.db.query("articles").filter((q) => q.eq(q.field("embedding"), undefined)).collect();
+  args: {
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.query("articles")
+      .withIndex("by_embedding_status", (q) => q.eq("embedding", undefined))
+      .order("desc")
+      .paginate(args.paginationOpts);
   },
 });
 
@@ -213,7 +217,7 @@ export const fixMissingEmbeddings = mutation({
 
     // Use pagination to get a batch of articles with missing embeddings
     const articlesPage = await ctx.db.query("articles")
-      .filter((q) => q.eq(q.field("embedding"), undefined))
+      .withIndex("by_embedding_status", (q) => q.eq("embedding", undefined))
       .paginate({
         cursor: args.cursor ?? null,
         numItems: batchSize
