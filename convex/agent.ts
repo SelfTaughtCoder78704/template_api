@@ -41,6 +41,45 @@ export const articleAgent = new Agent(components.agent, {
     "If the 'searchArticlesTool' returns no relevant articles, state that you couldn't find any information on that topic in the knowledge base. " +
     "Be polite and helpful.",
 
+  usageHandler: async (ctx, args) => {
+    const {
+      // Who used the tokens
+      userId, threadId, agentName,
+      // What LLM was used
+      model, provider,
+      // How many tokens were used (extra info is available in providerMetadata)
+      usage, providerMetadata
+    } = args;
+
+    // Log usage for monitoring
+    console.log(`[Agent Usage] User: ${userId}, Thread: ${threadId}, Model: ${model}, Provider: ${provider}`);
+    console.log(`[Agent Usage] Tokens - Prompt: ${usage.promptTokens}, Completion: ${usage.completionTokens}, Total: ${usage.totalTokens}`);
+
+    // Log OpenAI-specific metadata if available
+    if (providerMetadata?.openai) {
+      const openaiMeta = providerMetadata.openai;
+      if (openaiMeta.cachedPromptTokens !== undefined) {
+        console.log(`[Agent Usage] Cached Prompt Tokens: ${openaiMeta.cachedPromptTokens}`);
+      }
+      if (openaiMeta.reasoningTokens !== undefined) {
+        console.log(`[Agent Usage] Reasoning Tokens: ${openaiMeta.reasoningTokens}`);
+      }
+    }
+
+    // TODO: Optionally save usage to a database table for billing/analytics
+    // await ctx.runMutation(api.usage.logUsage, {
+    //   userId,
+    //   threadId,
+    //   agentName,
+    //   model,
+    //   provider,
+    //   promptTokens: usage.promptTokens,
+    //   completionTokens: usage.completionTokens,
+    //   totalTokens: usage.totalTokens,
+    //   metadata: providerMetadata
+    // });
+  },
+
   tools: {
     searchArticlesTool: createTool({
       description: "Searches and retrieves relevant articles from the knowledge base based on a user's query or keywords. Use this tool to find information for answering user questions.",
@@ -82,69 +121,31 @@ export const sendMessageToAgent = action({
       link: v.string(),
       truncatedContent: v.string(),
     }))),
-    usage: v.optional(v.object({
-      promptTokens: v.optional(v.number()),
-      completionTokens: v.optional(v.number()),
-      totalTokens: v.optional(v.number()),
-      // OpenAI-specific metadata
-      cachedPromptTokens: v.optional(v.number()),
-      reasoningTokens: v.optional(v.number()),
-      acceptedPredictionTokens: v.optional(v.number()),
-      rejectedPredictionTokens: v.optional(v.number()),
-    })),
   }),
   handler: async (ctx, args): Promise<{
     threadId: string,
     responseText: string,
     sources?: { title: string, link: string, truncatedContent: string }[],
-    usage?: {
-      promptTokens?: number,
-      completionTokens?: number,
-      totalTokens?: number,
-      cachedPromptTokens?: number,
-      reasoningTokens?: number,
-      acceptedPredictionTokens?: number,
-      rejectedPredictionTokens?: number,
-    }
   }> => {
     let thread: any;
     let threadId: string;
 
     // If threadId is provided, try to continue existing thread
     if (args.threadId) {
-      try {
-        const result: any = await articleAgent.continueThread(ctx, {
-          threadId: args.threadId,
-          userId: args.userId
-        });
-        thread = result.thread;
-        threadId = args.threadId;
-      } catch (error) {
-        // If continuing thread fails, create a new one
-        console.log("Failed to continue thread, creating new one:", error);
-        const newThreadId: string = await ctx.runMutation(api.threadMutations.createAgentThread, {
-          userId: args.userId,
-          title: "New Article Agent Thread"
-        });
-        const result: any = await articleAgent.continueThread(ctx, {
-          threadId: newThreadId,
-          userId: args.userId
-        });
-        thread = result.thread;
-        threadId = newThreadId;
-      }
-    } else {
-      // No threadId provided, create a new thread
-      const newThreadId: string = await ctx.runMutation(api.threadMutations.createAgentThread, {
-        userId: args.userId,
-        title: "New Article Agent Thread"
-      });
       const result: any = await articleAgent.continueThread(ctx, {
-        threadId: newThreadId,
+        threadId: args.threadId,
         userId: args.userId
       });
       thread = result.thread;
-      threadId = newThreadId;
+      threadId = args.threadId;
+    } else {
+      // No threadId provided, create a new thread
+      const result: any = await articleAgent.createThread(ctx, {
+        userId: args.userId,
+        title: "New Article Agent Thread"
+      });
+      thread = result.thread;
+      threadId = result.threadId;
     }
 
     const agentResponse: any = await thread.generateText({
@@ -152,50 +153,8 @@ export const sendMessageToAgent = action({
     });
 
     let sources: { title: string, link: string, truncatedContent: string }[] | undefined = undefined;
-    let usage: {
-      promptTokens?: number,
-      completionTokens?: number,
-      totalTokens?: number,
-      cachedPromptTokens?: number,
-      reasoningTokens?: number,
-      acceptedPredictionTokens?: number,
-      rejectedPredictionTokens?: number,
-    } | undefined = undefined;
 
-    // Extract usage information from agentResponse
-    try {
-      if (agentResponse.usage) {
-        usage = {
-          promptTokens: agentResponse.usage.promptTokens,
-          completionTokens: agentResponse.usage.completionTokens,
-          totalTokens: agentResponse.usage.totalTokens,
-        };
-
-        // Add OpenAI-specific metadata if available
-        if (agentResponse.providerMetadata?.openai) {
-          const openaiMetadata = agentResponse.providerMetadata.openai;
-          if (openaiMetadata.cachedPromptTokens !== undefined) {
-            usage.cachedPromptTokens = openaiMetadata.cachedPromptTokens;
-          }
-          if (openaiMetadata.reasoningTokens !== undefined) {
-            usage.reasoningTokens = openaiMetadata.reasoningTokens;
-          }
-          if (openaiMetadata.acceptedPredictionTokens !== undefined) {
-            usage.acceptedPredictionTokens = openaiMetadata.acceptedPredictionTokens;
-          }
-          if (openaiMetadata.rejectedPredictionTokens !== undefined) {
-            usage.rejectedPredictionTokens = openaiMetadata.rejectedPredictionTokens;
-          }
-        }
-
-        // Log usage for monitoring (can be removed in production)
-        console.log(`[sendMessageToAgent] Token usage - Prompt: ${usage.promptTokens}, Completion: ${usage.completionTokens}, Total: ${usage.totalTokens}${usage.cachedPromptTokens ? `, Cached: ${usage.cachedPromptTokens}` : ''}${usage.reasoningTokens ? `, Reasoning: ${usage.reasoningTokens}` : ''}`);
-      }
-    } catch (e) {
-      console.error("[sendMessageToAgent] Error extracting usage information:", e);
-    }
-
-    // Extract sources information (existing logic)
+    // Extract sources information from tool calls
     try {
       if (agentResponse.request?.body && typeof agentResponse.request.body === 'string') {
         const requestBody = JSON.parse(agentResponse.request.body);
@@ -254,7 +213,6 @@ export const sendMessageToAgent = action({
       threadId: threadId,
       responseText: agentResponse.text ?? "",
       sources,
-      usage,
     };
   },
 }); 

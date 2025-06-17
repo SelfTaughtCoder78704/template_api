@@ -290,8 +290,8 @@ http.route({
     }
 
     // Basic validation for required fields
-    if (!body.threadId || typeof body.threadId !== 'string') {
-      return new Response(JSON.stringify({ error: "Missing or invalid threadId. Expected string." }), {
+    if (body.threadId && typeof body.threadId !== 'string') {
+      return new Response(JSON.stringify({ error: "Invalid threadId. Expected string." }), {
         headers: { "Content-Type": "application/json" },
         status: 400,
       });
