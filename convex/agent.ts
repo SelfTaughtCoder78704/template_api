@@ -150,6 +150,23 @@ export const sendMessageToAgent = action({
 
     const agentResponse: any = await thread.generateText({
       prompt: args.prompt,
+    }, {
+      contextOptions: {
+        // Exclude tool messages to save space (they're often verbose)
+        excludeToolMessages: false, // Keep tools for now since searchArticlesTool provides sources
+        // Include more recent messages for better conversation flow
+        recentMessages: 10, // Increased from global default of 1
+        // Search options for finding relevant historical context
+        searchOptions: {
+          limit: 5, // Increased from global default of 2
+          textSearch: true, // Enable text search for better context retrieval
+          vectorSearch: true, // Keep vector search enabled
+          // Get context around found messages
+          messageRange: { before: 1, after: 1 },
+        },
+        // Don't search other threads (keep conversations isolated)
+        searchOtherThreads: false,
+      },
     });
 
     let sources: { title: string, link: string, truncatedContent: string }[] | undefined = undefined;
