@@ -99,7 +99,8 @@ export const getRateLimitValue = action({
   returns: v.object({
     config: v.any(),
     value: v.number(),
-    timestamp: v.number(),
+    ts: v.number(),
+    shard: v.number(),
   }),
   handler: async (ctx, args) => {
     if (args.key) {
