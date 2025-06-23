@@ -6,8 +6,6 @@ import { internal, components, api } from "./_generated/api";
 import { action } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
 import { z } from "zod";
-import { ConvexError } from "convex/values";
-import { rateLimiter } from "./rateLimiter";
 
 // Temporarily set OPENAI_API_KEY for @ai-sdk/openai if CONVEX_OPENAI_API_KEY is available
 if (process.env.CONVEX_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
@@ -26,7 +24,7 @@ const searchToolArgsSchema = z.object({
 });
 
 export const articleAgent = new Agent(components.agent, {
-  chat: openai.chat("gpt-4.1-nano-2025-04-14"),
+  chat: openai.chat("gpt-4.1-2025-04-14"),
   textEmbedding: openai.embedding("text-embedding-3-small"),
 
   instructions:
@@ -114,7 +112,6 @@ export const sendMessageToAgent = action({
     threadId: v.optional(v.string()),
     prompt: v.string(),
     userId: v.optional(v.id("users")),
-    sponsoredContributorIds: v.optional(v.array(v.number())),
   },
   returns: v.object({
     threadId: v.string(),
@@ -124,120 +121,53 @@ export const sendMessageToAgent = action({
       link: v.string(),
       truncatedContent: v.string(),
     }))),
-    sponsoredSources: v.optional(v.array(v.object({
-      title: v.string(),
-      link: v.string(),
-      truncatedContent: v.string(),
-    }))),
   }),
   handler: async (ctx, args): Promise<{
     threadId: string,
     responseText: string,
     sources?: { title: string, link: string, truncatedContent: string }[],
-    sponsoredSources?: { title: string, link: string, truncatedContent: string }[],
   }> => {
-    // Apply rate limiting
-    console.log(`[RATE LIMIT DEBUG] Starting rate limit checks for threadId: ${args.threadId}`);
+    let thread: any;
+    let threadId: string;
 
-    // Check global rate limiting (always applied)
-    const globalLimit = await rateLimiter.limit(ctx, "globalSearch");
-    console.log(`[RATE LIMIT DEBUG] Global limit result:`, globalLimit);
-    if (!globalLimit.ok) {
-      console.log(`[RATE LIMIT DEBUG] Global rate limit EXCEEDED`);
-      throw new ConvexError({
-        kind: "RateLimited",
-        limitType: "global",
-        retryAfter: globalLimit.retryAfter || 0,
-        message: `Global rate limit exceeded. Retry after ${Math.ceil((globalLimit.retryAfter || 0) / 1000)} seconds.`
-      });
-    }
-
-    // Check per-thread rate limiting (if threadId provided)
+    // If threadId is provided, try to continue existing thread
     if (args.threadId) {
-      console.log(`[RATE LIMIT DEBUG] Checking thread limit for threadId: ${args.threadId}`);
-
-      // First check the current value to see what's in the bucket
-      const currentValue = await rateLimiter.getValue(ctx, "threadSearch", { key: args.threadId });
-      console.log(`[RATE LIMIT DEBUG] Current thread bucket value:`, currentValue);
-
-      const threadLimit = await rateLimiter.limit(ctx, "threadSearch", {
-        key: args.threadId
+      const result: any = await articleAgent.continueThread(ctx, {
+        threadId: args.threadId,
+        userId: args.userId
       });
-      console.log(`[RATE LIMIT DEBUG] Thread limit result:`, threadLimit);
-      if (!threadLimit.ok) {
-        console.log(`[RATE LIMIT DEBUG] Thread rate limit EXCEEDED for ${args.threadId}`);
-        throw new ConvexError({
-          kind: "RateLimited",
-          limitType: "thread",
-          threadId: args.threadId,
-          retryAfter: threadLimit.retryAfter || 0,
-          message: `Thread rate limit exceeded. Retry after ${Math.ceil((threadLimit.retryAfter || 0) / 1000)} seconds.`
-        });
-      }
+      thread = result.thread;
+      threadId = args.threadId;
+    } else {
+      // No threadId provided, create a new thread
+      const result: any = await articleAgent.createThread(ctx, {
+        userId: args.userId,
+        title: "New Article Agent Thread"
+      });
+      thread = result.thread;
+      threadId = result.threadId;
     }
 
-    console.log(`[RATE LIMIT DEBUG] All rate limit checks PASSED, proceeding with request`);
-
-    // Start both searches in parallel
-    const [agentResult, sponsoredSources] = await Promise.all([
-      // Agent semantic search + response generation
-      (async () => {
-        let thread: any;
-        let threadId: string;
-
-        // If threadId is provided, try to continue existing thread
-        if (args.threadId) {
-          const result: any = await articleAgent.continueThread(ctx, {
-            threadId: args.threadId,
-            userId: args.userId
-          });
-          thread = result.thread;
-          threadId = args.threadId;
-        } else {
-          // No threadId provided, create a new thread
-          const result: any = await articleAgent.createThread(ctx, {
-            userId: args.userId,
-            title: "New Article Agent Thread"
-          });
-          thread = result.thread;
-          threadId = result.threadId;
-        }
-
-        const agentResponse: any = await thread.generateText({
-          prompt: args.prompt,
-        }, {
-          contextOptions: {
-            // Exclude tool messages to save space (they're often verbose)
-            excludeToolMessages: false, // Keep tools for now since searchArticlesTool provides sources
-            // Include more recent messages for better conversation flow
-            recentMessages: 10, // Increased from global default of 1
-            // Search options for finding relevant historical context
-            searchOptions: {
-              limit: 5, // Increased from global default of 2
-              textSearch: true, // Enable text search for better context retrieval
-              vectorSearch: true, // Keep vector search enabled
-              // Get context around found messages
-              messageRange: { before: 1, after: 1 },
-            },
-            // Don't search other threads (keep conversations isolated)
-            searchOtherThreads: false,
-          },
-        });
-
-        return { threadId, agentResponse };
-      })(),
-
-      // Sponsored contributor search (only if contributor IDs provided)
-      args.sponsoredContributorIds?.length
-        ? ctx.runAction(internal.embeddingActions.searchSponsoredContributorArticles, {
-          searchQuery: args.prompt,
-          contributorIds: args.sponsoredContributorIds,
-          limit: 3
-        })
-        : Promise.resolve(undefined)
-    ]);
-
-    const { threadId, agentResponse } = agentResult;
+    const agentResponse: any = await thread.generateText({
+      prompt: args.prompt,
+    }, {
+      contextOptions: {
+        // Exclude tool messages to save space (they're often verbose)
+        excludeToolMessages: false, // Keep tools for now since searchArticlesTool provides sources
+        // Include more recent messages for better conversation flow
+        recentMessages: 10, // Increased from global default of 1
+        // Search options for finding relevant historical context
+        searchOptions: {
+          limit: 5, // Increased from global default of 2
+          textSearch: true, // Enable text search for better context retrieval
+          vectorSearch: true, // Keep vector search enabled
+          // Get context around found messages
+          messageRange: { before: 1, after: 1 },
+        },
+        // Don't search other threads (keep conversations isolated)
+        searchOtherThreads: false,
+      },
+    });
 
     let sources: { title: string, link: string, truncatedContent: string }[] | undefined = undefined;
 
@@ -296,21 +226,10 @@ export const sendMessageToAgent = action({
       console.error("[sendMessageToAgent] Error parsing tool call/response from agentResponse.request.body.messages:", e);
     }
 
-    // Convert sponsored sources to the correct format
-    let formattedSponsoredSources: { title: string, link: string, truncatedContent: string }[] | undefined = undefined;
-    if (sponsoredSources && sponsoredSources.length > 0) {
-      formattedSponsoredSources = sponsoredSources.map(article => ({
-        title: article.title,
-        link: article.reconstructedLink || article.link,
-        truncatedContent: article.content.substring(0, 300) + (article.content.length > 300 ? "..." : "")
-      }));
-    }
-
     return {
       threadId: threadId,
       responseText: agentResponse.text ?? "",
       sources,
-      sponsoredSources: formattedSponsoredSources,
     };
   },
 }); 

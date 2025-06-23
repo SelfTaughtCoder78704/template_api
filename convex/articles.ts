@@ -145,6 +145,25 @@ export const getByAuthorId = query({
   },
 });
 
+// Get articles by multiple contributor original_ids (for sponsored contributor search)
+export const getByMultipleAuthorIds = query({
+  args: { author_ids: v.array(v.number()) },
+  handler: async (ctx, args) => {
+    const articles: Doc<"articles">[] = [];
+
+    // Fetch articles for each contributor original_id
+    for (const authorId of args.author_ids) {
+      const contributorArticles = await ctx.db.query("articles")
+        .withIndex("by_author_id", (q) => q.eq("author_id", authorId))
+        .collect();
+
+      articles.push(...contributorArticles);
+    }
+
+    return articles;
+  },
+});
+
 // should be able to get by author_id and return the name field from the contributors table using getAuthorNameByAuthorId
 export const getAuthorNameByAuthorId = query({
   args: { author_id: v.number() },

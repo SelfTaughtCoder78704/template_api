@@ -309,6 +309,7 @@ http.route({
       threadId: body.threadId,
       prompt: body.prompt,
       userId: body.userId, // Optional
+      sponsoredContributorIds: body.sponsoredContributorIds, // New field
     };
 
     try {

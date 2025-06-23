@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
-import { articleAgent } from "./agent"; // Import the agent instance
+import { articleAgent } from "./openAiAgent"; // Import the agent instance
 
 // Public mutation to create a new agent thread
 export const createAgentThread = mutation({

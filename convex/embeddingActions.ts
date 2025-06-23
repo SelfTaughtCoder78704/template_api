@@ -270,3 +270,108 @@ export const searchSimilarArticlesInternal = internalAction({
   },
 });
 
+// --- Internal Action to search for sponsored contributor articles ---
+export const searchSponsoredContributorArticles = internalAction({
+  args: {
+    searchQuery: v.string(),
+    contributorIds: v.array(v.number()),
+    limit: v.optional(v.number()),
+  },
+  returns: v.array(SlimArticleDataValidator),
+  handler: async (ctx, args): Promise<({ _id: Id<"articles">, title: string, content: string, subtitle?: string, link: string, reconstructedLink?: string })[]> => {
+    console.log("[searchSponsoredContributorArticles] Received args:", JSON.stringify(args));
+
+    if (!args.contributorIds || args.contributorIds.length === 0) {
+      console.log("[searchSponsoredContributorArticles] No contributor IDs provided, returning empty array.");
+      return [];
+    }
+
+    // 1. Get all articles from the specified contributors
+    let contributorArticles: Doc<"articles">[] = [];
+    try {
+      contributorArticles = await ctx.runQuery(api.articles.getByMultipleAuthorIds, {
+        author_ids: args.contributorIds
+      });
+      console.log(`[searchSponsoredContributorArticles] Found ${contributorArticles.length} articles from ${args.contributorIds.length} contributors.`);
+    } catch (e) {
+      console.error("[searchSponsoredContributorArticles] Error fetching contributor articles:", e);
+      return [];
+    }
+
+    if (contributorArticles.length === 0) {
+      console.log("[searchSponsoredContributorArticles] No articles found for the specified contributors.");
+      return [];
+    }
+
+    // 2. Generate embedding for the search query
+    let queryEmbedding;
+    try {
+      const embeddingResponse = await openai.embeddings.create({
+        model: "text-embedding-3-small",
+        input: args.searchQuery,
+      });
+      queryEmbedding = embeddingResponse.data[0].embedding;
+      if (!queryEmbedding) {
+        console.error("[searchSponsoredContributorArticles] Failed to generate query embedding.");
+        throw new Error("Failed to generate query embedding.");
+      }
+      console.log("[searchSponsoredContributorArticles] Query embedding generated successfully.");
+    } catch (error) {
+      console.error("[searchSponsoredContributorArticles] Error generating query embedding:", error);
+      return [];
+    }
+
+    // 3. Calculate similarity scores for each contributor article
+    const articlesWithScores = contributorArticles
+      .filter(article => article.embedding && article.embedding.length > 0) // Only articles with embeddings
+      .map(article => {
+        // Calculate cosine similarity
+        const dotProduct = queryEmbedding.reduce((sum: number, val: number, i: number) =>
+          sum + val * article.embedding![i], 0);
+        const queryMagnitude = Math.sqrt(queryEmbedding.reduce((sum: number, val: number) =>
+          sum + val * val, 0));
+        const articleMagnitude = Math.sqrt(article.embedding!.reduce((sum: number, val: number) =>
+          sum + val * val, 0));
+
+        const similarity = dotProduct / (queryMagnitude * articleMagnitude);
+
+        return {
+          article,
+          similarity
+        };
+      })
+      .sort((a, b) => b.similarity - a.similarity) // Sort by similarity descending
+      .slice(0, args.limit ?? 3); // Take top N (default 3)
+
+    console.log(`[searchSponsoredContributorArticles] Ranked ${articlesWithScores.length} articles by similarity.`);
+
+    // 4. Map to the slimmer structure with reconstructed links
+    const slimDocuments = await Promise.all(articlesWithScores.map(async ({ article }) => {
+      let articleLink = `advisorpedia.com/${article.link}`;
+      let channelSlugForLink: string | null = null;
+      if (article.channel !== null && article.channel !== undefined) {
+        try {
+          channelSlugForLink = await ctx.runQuery(api.channels.getChannelSlugByChannelOriginalId, { channelOriginalId: article.channel });
+          if (channelSlugForLink) {
+            articleLink = `advisorpedia.com/${channelSlugForLink}/${article.link}`;
+          }
+        } catch (e) {
+          console.warn(`Failed to get channel slug for channel original_id ${article.channel} for article ${article._id}:`, e);
+          // Fallback to the simpler link if channel slug fetch fails
+        }
+      }
+
+      return {
+        _id: article._id,
+        title: article.title,
+        content: article.content + `\n\n(Source: ${articleLink})`, // Append constructed link to content
+        subtitle: article.subtitle || undefined,
+        link: article.link, // Keep original link field as well
+        reconstructedLink: articleLink,
+      };
+    }));
+
+    return slimDocuments;
+  },
+});
+
